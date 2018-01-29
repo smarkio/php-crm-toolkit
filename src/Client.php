@@ -20,6 +20,7 @@ namespace AlexaCRM\CRMToolkit;
 use AlexaCRM\CRMToolkit\Auth\Authentication;
 use AlexaCRM\CRMToolkit\Auth\Federation;
 use AlexaCRM\CRMToolkit\Auth\OnlineFederation;
+use AlexaCRM\CRMToolkit\Exception\InvalidTokenRequestException;
 use BadMethodCallException;
 use DOMDocument;
 use DOMElement;
@@ -1104,8 +1105,16 @@ class Client extends AbstractClient {
         curl_setopt( $cURLHandle, CURLOPT_URL, $soapUrl );
         curl_setopt( $cURLHandle, CURLOPT_RETURNTRANSFER, 1 );
         curl_setopt( $cURLHandle, CURLOPT_TIMEOUT, self::$connectorTimeout );
-        curl_setopt( $cURLHandle, CURLOPT_SSL_VERIFYPEER, 0 );
-        curl_setopt( $cURLHandle, CURLOPT_SSL_VERIFYHOST, 0 );
+
+        if ( $this->settings->caPath ) {
+            curl_setopt( $cURLHandle, CURLOPT_CAINFO, $this->settings->caPath );
+        }
+
+        if ( $this->settings->ignoreSslErrors ) {
+          curl_setopt( $cURLHandle, CURLOPT_SSL_VERIFYPEER, 0 );
+          curl_setopt( $cURLHandle, CURLOPT_SSL_VERIFYHOST, 0 );
+        }
+
         curl_setopt( $cURLHandle, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
         curl_setopt( $cURLHandle, CURLOPT_HTTPHEADER, $headers );
         curl_setopt( $cURLHandle, CURLOPT_POST, 1 );
@@ -1156,6 +1165,11 @@ class Client extends AbstractClient {
             throw new Exception( 'Invalid SOAP Response: No SOAP Header! ' . PHP_EOL . $responseXML );
         }
         /* Get the SOAP Action */
+        if(empty($responseDOM->getElementsByTagNameNS( 'http://www.w3.org/2005/08/addressing', 'Action' )->item( 0 )))
+        {
+            throw new \Exception("Missing Action value on SOAP Response");
+        }
+        
         $actionString = $responseDOM->getElementsByTagNameNS( 'http://www.w3.org/2003/05/soap-envelope', 'Envelope' )->item( 0 )
                                     ->getElementsByTagNameNS( 'http://www.w3.org/2003/05/soap-envelope', 'Header' )->item( 0 )
                                     ->getElementsByTagNameNS( 'http://www.w3.org/2005/08/addressing', 'Action' )->item( 0 )->textContent;
@@ -1951,6 +1965,10 @@ class Client extends AbstractClient {
             curl_setopt( $wsdlCurl, CURLOPT_CONNECTTIMEOUT, self::$connectorTimeout );
             curl_setopt( $wsdlCurl, CURLOPT_TIMEOUT, self::$connectorTimeout );
 
+            if ( $this->settings->caPath ) {
+                curl_setopt( $wsdlCurl, CURLOPT_CAINFO, $this->settings->caPath );
+            }
+
             if ( $this->settings->ignoreSslErrors ) {
                 curl_setopt( $wsdlCurl, CURLOPT_SSL_VERIFYPEER, 0 );
                 curl_setopt( $wsdlCurl, CURLOPT_SSL_VERIFYHOST, 0 );
@@ -1983,7 +2001,7 @@ class Client extends AbstractClient {
      * @throws InvalidSecurityException
      */
     public function attemptSoapResponse( $service, \Closure $soapRequest ) {
-        $attemptsLeft = 3;
+        $attemptsLeft = 1; // FIXME: triplicate records created
         $lastException = null;
         while ( $attemptsLeft > 0 ) {
             try {
@@ -1994,6 +2012,10 @@ class Client extends AbstractClient {
                 $this->authentication->invalidateToken( $service );
                 $attemptsLeft --;
                 $lastException = $e;
+            }
+            catch (InvalidTokenRequestException $invalidTokenRequestException)
+            {
+                throw $invalidTokenRequestException;
             } catch ( SoapFault $e ) {
                 // entity ID or entitykey is invalid
                 if ( in_array( $e->faultcode, [ '-2147220969', '-2147088239' ] ) ) {
@@ -2009,11 +2031,11 @@ class Client extends AbstractClient {
         }
 
         if ( $lastException instanceof InvalidSecurityException ) {
-            $this->logger->alert( 'Service returned an InvalidSecurity exception due to invalid security token, and the toolkit was not able to renew the token after 3 attempts.', [ 'service' => $service ] );
-            throw new InvalidSecurityException( 'InvalidSecurity', 'An error occurred when verifying security for the message.' );
+            $this->logger->alert( 'Service returned an InvalidSecurity exception due to invalid security token.', [ 'service' => $service ] );
+            throw $lastException;
         }
 
-        $this->logger->alert( 'Could not retrieve a SOAP response after 3 attempts.', [ 'service' => $service, 'lastException' => $lastException ] );
-        throw new Exception( 'Unable to retrieve data from Dynamics CRM', 0, $lastException );
+        $this->logger->alert( 'Could not retrieve a SOAP response.', [ 'service' => $service, 'lastException' => $lastException ] );
+        throw $lastException;
     }
 }

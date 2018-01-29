@@ -17,6 +17,7 @@
 
 namespace AlexaCRM\CRMToolkit\Auth;
 
+use AlexaCRM\CRMToolkit\Exception\InvalidTokenRequestException;
 use AlexaCRM\CRMToolkit\SecurityToken;
 use AlexaCRM\CRMToolkit\Settings;
 use AlexaCRM\CRMToolkit\Client;
@@ -107,6 +108,9 @@ abstract class Authentication {
      * @param string $service
      *
      * @return SecurityToken
+     * @throws InvalidTokenRequestException
+     * @throws \AlexaCRM\CRMToolkit\InvalidSecurityException
+     * @throws \Exception
      */
     protected function retrieveToken( $service ) {
         $tokenResponse = $this->client->attemptSoapResponse( 'sts', function() use ( $service ) {
@@ -119,6 +123,10 @@ abstract class Authentication {
         $newToken = new SecurityToken();
 
         $cipherValues = $securityDOM->getElementsByTagName( 'CipherValue' );
+        if(empty($cipherValues->item(0)) || empty($cipherValues->item(1)))
+        {
+            throw new InvalidTokenRequestException("Could not request token from CRM");
+        }
         $newToken->securityToken0 = $cipherValues->item( 0 )->textContent;
         $newToken->securityToken1 = $cipherValues->item( 1 )->textContent;
 
@@ -131,6 +139,11 @@ abstract class Authentication {
         }
 
         $newToken->securityToken = $securityDOM->saveXML( $securityDOM->getElementsByTagName( "RequestedSecurityToken" )->item( 0 )->firstChild );
+
+        if($securityDOM->getElementsByTagName("RequestSecurityTokenResponse")->length === 0)
+        {
+            throw new InvalidTokenRequestException("Invalid RequestSecurityTokenResponse when requesting token from CRM");
+        }
 
         $expiryTime = $securityDOM->getElementsByTagName( "RequestSecurityTokenResponse" )->item( 0 )->getElementsByTagName( 'Expires' )->item( 0 )->textContent;
         $newToken->expiryTime = Client::parseTime( substr( $expiryTime, 0, -1 ), '%Y-%m-%dT%H:%M:%S' );

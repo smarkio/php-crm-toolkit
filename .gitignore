@@ -1,4 +1,4 @@
 /examples/config.php
-
+.idea/
 composer.lock
 vendor/
